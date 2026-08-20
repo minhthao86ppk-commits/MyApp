@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "My New App",
+    "slug": "mynewapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.minhthao.mynewapp"
+    }
+  }
+}
