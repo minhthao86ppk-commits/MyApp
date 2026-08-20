@@ -4,6 +4,9 @@
     "slug": "mynewapp",
     "version": "1.0.0",
     "orientation": "portrait",
+    "experiments": {
+      "baseUrl": "/MyApp"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.minhthao.mynewapp"
