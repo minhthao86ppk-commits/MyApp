@@ -1,18 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView, Alert, StatusBar } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView, Platform, StatusBar } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Thiết lập thông báo hiển thị cả khi app đang mở
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// Cấu hình thông báo trên điện thoại
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 // --- THUẬT TOÁN TÍNH LỊCH ÂM VIỆT NAM ---
 function INT(d) { return Math.floor(d); }
@@ -104,15 +105,10 @@ export default function App() {
 
   useEffect(() => {
     loadSavedSchedule();
-    requestNotificationPermission();
-  }, []);
-
-  const requestNotificationPermission = async () => {
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Lưu ý', 'Vui lòng cấp quyền thông báo để nhận lời nhắc lúc 05:00 sáng.');
+    if (Platform.OS !== 'web') {
+      Notifications.requestPermissionsAsync();
     }
-  };
+  }, []);
 
   const loadSavedSchedule = async () => {
     try {
@@ -123,29 +119,31 @@ export default function App() {
     }
   };
 
-  // Tự động lên lịch thông báo 05:00 sáng cho các ngày có lịch dạy
   const scheduleDailyNotifications = async (scheduleData) => {
-    await Notifications.cancelAllScheduledNotificationsAsync();
-    const now = new Date();
-
-    for (const [dateStr, info] of Object.entries(scheduleData)) {
-      const [d, m, y] = dateStr.split('/').map(Number);
-      const targetDate = new Date(y, m - 1, d, 5, 0, 0); // 05:00:00 sáng
-
-      if (targetDate > now) {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: '⏰ Nhắc Lịch Giảng Dạy Hôm Nay',
-            body: `Hôm nay (${dateStr}) bạn có ${info.periods}. ${info.note ? `Chi tiết: ${info.note}` : ''}`,
-            sound: true,
-          },
-          trigger: targetDate,
-        });
+    if (Platform.OS === 'web') return; // Bỏ qua thông báo gốc khi đang mở trên trình duyệt Web
+    try {
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      const now = new Date();
+      for (const [dateStr, info] of Object.entries(scheduleData)) {
+        const [d, m, y] = dateStr.split('/').map(Number);
+        const targetDate = new Date(y, m - 1, d, 5, 0, 0);
+        if (targetDate > now) {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: '⏰ Nhắc Lịch Giảng Dạy',
+              body: `Hôm nay (${dateStr}) có ${info.periods}`,
+              sound: true,
+            },
+            trigger: targetDate,
+          });
+        }
       }
+    } catch (err) {
+      console.log('Lỗi thông báo:', err);
     }
   };
 
-  // Tải và đọc file .txt
+  // Đọc file .txt đa nền tảng (Web & iPhone)
   const pickAndParseTxtFile = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
@@ -155,17 +153,22 @@ export default function App() {
 
       if (res.canceled || !res.assets || res.assets.length === 0) return;
 
-      const fileUri = res.assets[0].uri;
-      const content = await FileSystem.readAsStringAsync(fileUri);
+      const fileAsset = res.assets[0];
+      let content = '';
 
-      // Phân tích cú pháp từng dòng
+      if (fileAsset.file) {
+        content = await fileAsset.file.text();
+      } else {
+        const response = await fetch(fileAsset.uri);
+        content = await response.text();
+      }
+
       const lines = content.split('\n');
       const newSchedule = {};
 
       lines.forEach((line) => {
         const clean = line.trim();
         if (!clean) return;
-        // Hỗ trợ định dạng DD/MM/YYYY: X tiết hoặc YYYY-MM-DD
         const match = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\s*[:\-]\s*(.+)$/);
         if (match) {
           const day = parseInt(match[1], 10);
@@ -174,18 +177,23 @@ export default function App() {
           const key = `${day}/${month}/${year}`;
           newSchedule[key] = {
             periods: match[4].trim(),
-            note: '',
           };
         }
       });
+
+      const count = Object.keys(newSchedule).length;
+      if (count === 0) {
+        alert('Không tìm thấy dòng lịch nào hợp lệ! Định dạng mẫu: 21/08/2026: 4 tiết');
+        return;
+      }
 
       setSchedule(newSchedule);
       await AsyncStorage.setItem('@teaching_schedule', JSON.stringify(newSchedule));
       await scheduleDailyNotifications(newSchedule);
 
-      Alert.alert('Thành Công', `Đã cập nhật ${Object.keys(newSchedule).length} ngày giảng dạy và cài đặt báo thức 05:00 sáng!`);
+      alert(`✅ Đã cập nhật thành công ${count} ngày giảng dạy!`);
     } catch (err) {
-      Alert.alert('Lỗi', 'Không thể đọc file .txt. Vui lòng kiểm tra lại định dạng file.');
+      alert('Lỗi nạp file: ' + err.message);
     }
   };
 
@@ -266,7 +274,7 @@ export default function App() {
           <View style={styles.scheduleInfoBox}>
             <Text style={styles.scheduleInfoTitle}>📚 Lịch giảng dạy:</Text>
             <Text style={styles.scheduleInfoContent}>
-              {currentTeaching ? `Có ${currentTeaching.periods} (Báo thức 05:00 sáng)` : 'Không có tiết giảng'}
+              {currentTeaching ? `Có ${currentTeaching.periods}` : 'Không có tiết giảng'}
             </Text>
           </View>
         </View>
@@ -299,7 +307,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1A1A24' },
-  scroll: { padding: 16, alignItems: 'center' },
+  scroll: { padding: 16, alignItems: 'center', width: '100%', maxWidth: 500, alignSelf: 'center' },
   uploadButton: {
     width: '100%',
     backgroundColor: '#2E7D32',
@@ -307,7 +315,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     marginBottom: 14,
-    elevation: 3,
+    cursor: 'pointer',
   },
   uploadButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
   heroCard: {
@@ -335,16 +343,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scheduleInfoTitle: { color: '#FFD700', fontSize: 13, fontWeight: 'bold' },
-  scheduleInfoContent: { color: '#FFFFFF', fontSize: 14, marginTop: 2, fontWeight: '600' },
+  scheduleInfoContent: { color: '#FFFFFF', fontSize: 14, marginTop: 2, fontWeight: '600', textAlign: 'center' },
   calendarContainer: { width: '100%', backgroundColor: '#242432', borderRadius: 20, padding: 16 },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   monthTitle: { fontSize: 17, fontWeight: 'bold', color: '#FFFFFF' },
-  navBtn: { padding: 6, backgroundColor: '#323244', borderRadius: 8 },
+  navBtn: { padding: 6, backgroundColor: '#323244', borderRadius: 8, cursor: 'pointer' },
   navBtnText: { color: '#FFD700', fontSize: 13 },
   weekHeader: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
   weekHeaderText: { width: '14.2%', textAlign: 'center', color: '#8E8E93', fontWeight: 'bold', fontSize: 12 },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  dayCell: { width: '14.2%', height: 50, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 8 },
+  dayCell: { width: '14.2%', height: 50, justifyContent: 'center', alignItems: 'center', marginVertical: 2, borderRadius: 8, cursor: 'pointer' },
   selectedCell: { backgroundColor: '#FFD700' },
   todayCell: { borderWidth: 1, borderColor: '#E63946' },
   solarDayText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
