@@ -25,8 +25,12 @@ jobs:
       - name: Build Xcode Archive
         run: |
           cd ios
+          # Tự động lấy chính xác tên Scheme đầu tiên trong Xcode
+          SCHEME_NAME=$(xcodebuild -list | grep -A 1 "Schemes:" | tail -n 1 | xargs)
+          echo "Dang build voi Scheme: $SCHEME_NAME"
+          
           xcodebuild -workspace *.xcworkspace \
-                     -scheme $(xcodebuild -list -json | jq -r '.workspace.schemes[0]') \
+                     -scheme "$SCHEME_NAME" \
                      -configuration Release \
                      -sdk iphoneos \
                      -archivePath $PWD/build/App.xcarchive \
