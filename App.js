@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView, Platform, StatusBar } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView, Platform, StatusBar, TextInput } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Cấu hình thông báo trên điện thoại
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -15,7 +14,6 @@ if (Platform.OS !== 'web') {
   });
 }
 
-// --- THUẬT TOÁN TÍNH LỊCH ÂM VIỆT NAM ---
 function INT(d) { return Math.floor(d); }
 function jdFromDate(dd, mm, yy) {
   let a = INT((14 - mm) / 12);
@@ -102,31 +100,40 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [schedule, setSchedule] = useState({});
+  const [notifyHour, setNotifyHour] = useState('05');
+  const [notifyMinute, setNotifyMinute] = useState('00');
 
   useEffect(() => {
-    loadSavedSchedule();
+    loadSavedData();
     if (Platform.OS !== 'web') {
       Notifications.requestPermissionsAsync();
     }
   }, []);
 
-  const loadSavedSchedule = async () => {
+  const loadSavedData = async () => {
     try {
       const data = await AsyncStorage.getItem('@teaching_schedule');
       if (data) setSchedule(JSON.parse(data));
+      const savedH = await AsyncStorage.getItem('@notify_hour');
+      if (savedH) setNotifyHour(savedH);
+      const savedM = await AsyncStorage.getItem('@notify_minute');
+      if (savedM) setNotifyMinute(savedM);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const scheduleDailyNotifications = async (scheduleData) => {
-    if (Platform.OS === 'web') return; // Bỏ qua thông báo gốc khi đang mở trên trình duyệt Web
+  const scheduleDailyNotifications = async (scheduleData, h = notifyHour, m = notifyMinute) => {
+    if (Platform.OS === 'web') return;
     try {
       await Notifications.cancelAllScheduledNotificationsAsync();
       const now = new Date();
+      const hourNum = parseInt(h, 10) || 5;
+      const minNum = parseInt(m, 10) || 0;
+
       for (const [dateStr, info] of Object.entries(scheduleData)) {
-        const [d, m, y] = dateStr.split('/').map(Number);
-        const targetDate = new Date(y, m - 1, d, 5, 0, 0);
+        const [d, mo, y] = dateStr.split('/').map(Number);
+        const targetDate = new Date(y, mo - 1, d, hourNum, minNum, 0);
         if (targetDate > now) {
           await Notifications.scheduleNotificationAsync({
             content: {
@@ -143,7 +150,24 @@ export default function App() {
     }
   };
 
-  // Đọc file .txt đa nền tảng (Web & iPhone)
+  const handleSaveTime = async () => {
+    let h = parseInt(notifyHour, 10);
+    let m = parseInt(notifyMinute, 10);
+    if (isNaN(h) || h < 0 || h > 23) h = 5;
+    if (isNaN(m) || m < 0 || m > 59) m = 0;
+
+    const formattedH = h.toString().padStart(2, '0');
+    const formattedM = m.toString().padStart(2, '0');
+    setNotifyHour(formattedH);
+    setNotifyMinute(formattedM);
+
+    await AsyncStorage.setItem('@notify_hour', formattedH);
+    await AsyncStorage.setItem('@notify_minute', formattedM);
+    await scheduleDailyNotifications(schedule, formattedH, formattedM);
+
+    alert(`⏰ Đã cập nhật giờ thông báo: ${formattedH}:${formattedM} mỗi sáng!`);
+  };
+
   const pickAndParseTxtFile = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
@@ -189,9 +213,9 @@ export default function App() {
 
       setSchedule(newSchedule);
       await AsyncStorage.setItem('@teaching_schedule', JSON.stringify(newSchedule));
-      await scheduleDailyNotifications(newSchedule);
+      await scheduleDailyNotifications(newSchedule, notifyHour, notifyMinute);
 
-      alert(`✅ Đã cập nhật thành công ${count} ngày giảng dạy!`);
+      alert(`✅ Đã nạp thành công ${count} ngày dạy! Thông báo lúc ${notifyHour}:${notifyMinute}.`);
     } catch (err) {
       alert('Lỗi nạp file: ' + err.message);
     }
@@ -253,6 +277,35 @@ export default function App() {
           <Text style={styles.uploadButtonText}>📂 Tải lên file lịch giảng (.txt)</Text>
         </TouchableOpacity>
 
+        {/* CÀI ĐẶT GIỜ THÔNG BÁO */}
+        <View style={styles.timeSettingBox}>
+          <Text style={styles.timeSettingLabel}>⏰ Giờ thông báo:</Text>
+          <View style={styles.timeInputsRow}>
+            <TextInput
+              style={styles.timeInput}
+              value={notifyHour}
+              onChangeText={setNotifyHour}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="05"
+              placeholderTextColor="#888"
+            />
+            <Text style={styles.timeColon}>:</Text>
+            <TextInput
+              style={styles.timeInput}
+              value={notifyMinute}
+              onChangeText={setNotifyMinute}
+              keyboardType="number-pad"
+              maxLength={2}
+              placeholder="00"
+              placeholderTextColor="#888"
+            />
+            <TouchableOpacity style={styles.saveTimeBtn} onPress={handleSaveTime}>
+              <Text style={styles.saveTimeBtnText}>Lưu giờ</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* THẺ NGÀY ĐANG CHỌN */}
         <View style={styles.heroCard}>
           <Text style={styles.weekdayText}>{WEEKDAYS[selectedDate.getDay()]}</Text>
@@ -270,7 +323,6 @@ export default function App() {
             </View>
           </View>
 
-          {/* CHI TIẾT TIẾT GIẢNG TRONG NGÀY */}
           <View style={styles.scheduleInfoBox}>
             <Text style={styles.scheduleInfoTitle}>📚 Lịch giảng dạy:</Text>
             <Text style={styles.scheduleInfoContent}>
@@ -311,13 +363,47 @@ const styles = StyleSheet.create({
   uploadButton: {
     width: '100%',
     backgroundColor: '#2E7D32',
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 10,
     cursor: 'pointer',
   },
-  uploadButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
+  uploadButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: 'bold' },
+  timeSettingBox: {
+    width: '100%',
+    backgroundColor: '#242432',
+    borderRadius: 12,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  timeSettingLabel: { color: '#FFD700', fontSize: 13, fontWeight: 'bold' },
+  timeInputsRow: { flexDirection: 'row', alignItems: 'center' },
+  timeInput: {
+    backgroundColor: '#1A1A24',
+    color: '#FFFFFF',
+    width: 36,
+    height: 32,
+    borderRadius: 6,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: 'bold',
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  timeColon: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', marginHorizontal: 4 },
+  saveTimeBtn: {
+    backgroundColor: '#1976D2',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    marginLeft: 8,
+    cursor: 'pointer',
+  },
+  saveTimeBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: 'bold' },
   heroCard: {
     width: '100%',
     backgroundColor: '#8B0000',
